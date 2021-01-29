@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Stack;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
@@ -56,20 +57,18 @@ import org.springframework.boot.configurationprocessor.metadata.ItemMetadata;
  * @author Jonas Keßler
  * @since 1.2.0
  */
-@SupportedAnnotationTypes({ "*" })
+@SupportedAnnotationTypes({ ConfigurationMetadataAnnotationProcessor.CONFIGURATION_PROPERTIES_ANNOTATION,
+		ConfigurationMetadataAnnotationProcessor.ENDPOINT_ANNOTATION,
+		"org.springframework.context.annotation.Configuration" })
 public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor {
 
-	static final String ADDITIONAL_METADATA_LOCATIONS_OPTION = "org.springframework.boot."
-			+ "configurationprocessor.additionalMetadataLocations";
+	static final String ADDITIONAL_METADATA_LOCATIONS_OPTION = "org.springframework.boot.configurationprocessor.additionalMetadataLocations";
 
-	static final String CONFIGURATION_PROPERTIES_ANNOTATION = "org.springframework.boot."
-			+ "context.properties.ConfigurationProperties";
+	static final String CONFIGURATION_PROPERTIES_ANNOTATION = "org.springframework.boot.context.properties.ConfigurationProperties";
 
-	static final String NESTED_CONFIGURATION_PROPERTY_ANNOTATION = "org.springframework.boot."
-			+ "context.properties.NestedConfigurationProperty";
+	static final String NESTED_CONFIGURATION_PROPERTY_ANNOTATION = "org.springframework.boot.context.properties.NestedConfigurationProperty";
 
-	static final String DEPRECATED_CONFIGURATION_PROPERTY_ANNOTATION = "org.springframework.boot."
-			+ "context.properties.DeprecatedConfigurationProperty";
+	static final String DEPRECATED_CONFIGURATION_PROPERTY_ANNOTATION = "org.springframework.boot.context.properties.DeprecatedConfigurationProperty";
 
 	static final String CONSTRUCTOR_BINDING_ANNOTATION = "org.springframework.boot.context.properties.ConstructorBinding";
 
@@ -77,8 +76,9 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 
 	static final String ENDPOINT_ANNOTATION = "org.springframework.boot.actuate.endpoint.annotation.Endpoint";
 
-	static final String READ_OPERATION_ANNOTATION = "org.springframework.boot.actuate."
-			+ "endpoint.annotation.ReadOperation";
+	static final String READ_OPERATION_ANNOTATION = "org.springframework.boot.actuate.endpoint.annotation.ReadOperation";
+
+	static final String NAME_ANNOTATION = "org.springframework.boot.context.properties.bind.Name";
 
 	private static final Set<String> SUPPORTED_OPTIONS = Collections
 			.unmodifiableSet(Collections.singleton(ADDITIONAL_METADATA_LOCATIONS_OPTION));
@@ -117,6 +117,10 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 		return READ_OPERATION_ANNOTATION;
 	}
 
+	protected String nameAnnotation() {
+		return NAME_ANNOTATION;
+	}
+
 	@Override
 	public SourceVersion getSupportedSourceVersion() {
 		return SourceVersion.latestSupported();
@@ -135,7 +139,7 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 		this.metadataEnv = new MetadataGenerationEnvironment(env, configurationPropertiesAnnotation(),
 				nestedConfigurationPropertyAnnotation(), deprecatedConfigurationPropertyAnnotation(),
 				constructorBindingAnnotation(), defaultValueAnnotation(), endpointAnnotation(),
-				readOperationAnnotation());
+				readOperationAnnotation(), nameAnnotation());
 	}
 
 	@Override
@@ -180,10 +184,10 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 			if (annotation != null) {
 				String prefix = getPrefix(annotation);
 				if (element instanceof TypeElement) {
-					processAnnotatedTypeElement(prefix, (TypeElement) element);
+					processAnnotatedTypeElement(prefix, (TypeElement) element, new Stack<>());
 				}
 				else if (element instanceof ExecutableElement) {
-					processExecutableElement(prefix, (ExecutableElement) element);
+					processExecutableElement(prefix, (ExecutableElement) element, new Stack<>());
 				}
 			}
 		}
@@ -192,13 +196,13 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 		}
 	}
 
-	private void processAnnotatedTypeElement(String prefix, TypeElement element) {
+	private void processAnnotatedTypeElement(String prefix, TypeElement element, Stack<TypeElement> seen) {
 		String type = this.metadataEnv.getTypeUtils().getQualifiedName(element);
 		this.metadataCollector.add(ItemMetadata.newGroup(prefix, type, type, null));
-		processTypeElement(prefix, element, null);
+		processTypeElement(prefix, element, null, seen);
 	}
 
-	private void processExecutableElement(String prefix, ExecutableElement element) {
+	private void processExecutableElement(String prefix, ExecutableElement element, Stack<TypeElement> seen) {
 		if ((!element.getModifiers().contains(Modifier.PRIVATE))
 				&& (TypeKind.VOID != element.getReturnType().getKind())) {
 			Element returns = this.processingEnv.getTypeUtils().asElement(element.getReturnType());
@@ -213,22 +217,27 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 				}
 				else {
 					this.metadataCollector.add(group);
-					processTypeElement(prefix, (TypeElement) returns, element);
+					processTypeElement(prefix, (TypeElement) returns, element, seen);
 				}
 			}
 		}
 	}
 
-	private void processTypeElement(String prefix, TypeElement element, ExecutableElement source) {
-		new PropertyDescriptorResolver(this.metadataEnv).resolve(element, source).forEach((descriptor) -> {
-			this.metadataCollector.add(descriptor.resolveItemMetadata(prefix, this.metadataEnv));
-			if (descriptor.isNested(this.metadataEnv)) {
-				TypeElement nestedTypeElement = (TypeElement) this.metadataEnv.getTypeUtils()
-						.asElement(descriptor.getType());
-				String nestedPrefix = ConfigurationMetadata.nestedPrefix(prefix, descriptor.getName());
-				processTypeElement(nestedPrefix, nestedTypeElement, source);
-			}
-		});
+	private void processTypeElement(String prefix, TypeElement element, ExecutableElement source,
+			Stack<TypeElement> seen) {
+		if (!seen.contains(element)) {
+			seen.push(element);
+			new PropertyDescriptorResolver(this.metadataEnv).resolve(element, source).forEach((descriptor) -> {
+				this.metadataCollector.add(descriptor.resolveItemMetadata(prefix, this.metadataEnv));
+				if (descriptor.isNested(this.metadataEnv)) {
+					TypeElement nestedTypeElement = (TypeElement) this.metadataEnv.getTypeUtils()
+							.asElement(descriptor.getType());
+					String nestedPrefix = ConfigurationMetadata.nestedPrefix(prefix, descriptor.getName());
+					processTypeElement(nestedPrefix, nestedTypeElement, source, seen);
+				}
+			});
+			seen.pop();
+		}
 	}
 
 	private void processEndpoint(Element element, List<Element> annotations) {
@@ -247,7 +256,7 @@ public class ConfigurationMetadataAnnotationProcessor extends AbstractProcessor 
 	private void processEndpoint(AnnotationMirror annotation, TypeElement element) {
 		Map<String, Object> elementValues = this.metadataEnv.getAnnotationElementValues(annotation);
 		String endpointId = (String) elementValues.get("id");
-		if (endpointId == null || "".equals(endpointId)) {
+		if (endpointId == null || endpointId.isEmpty()) {
 			return; // Can't process that endpoint
 		}
 		String endpointKey = ItemMetadata.newItemMetadataPrefix("management.endpoint.", endpointId);

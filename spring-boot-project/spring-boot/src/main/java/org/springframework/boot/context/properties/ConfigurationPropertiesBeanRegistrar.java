@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.springframework.boot.context.properties;
 
 import org.springframework.beans.factory.BeanFactory;
@@ -88,7 +89,7 @@ final class ConfigurationPropertiesBeanRegistrar {
 	}
 
 	private BeanDefinition createBeanDefinition(String beanName, Class<?> type) {
-		if (BindMethod.forClass(type) == BindMethod.VALUE_OBJECT) {
+		if (BindMethod.forType(type) == BindMethod.VALUE_OBJECT) {
 			return new ConfigurationPropertiesValueObjectBeanDefinition(this.beanFactory, beanName, type);
 		}
 		GenericBeanDefinition definition = new GenericBeanDefinition();

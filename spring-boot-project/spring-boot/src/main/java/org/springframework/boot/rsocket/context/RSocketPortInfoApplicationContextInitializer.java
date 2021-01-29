@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ public class RSocketPortInfoApplicationContextInitializer
 
 		private static final String PROPERTY_NAME = "local.rsocket.server.port";
 
-		private ConfigurableApplicationContext applicationContext;
+		private final ConfigurableApplicationContext applicationContext;
 
 		Listener(ConfigurableApplicationContext applicationContext) {
 			this.applicationContext = applicationContext;
@@ -63,7 +63,9 @@ public class RSocketPortInfoApplicationContextInitializer
 
 		@Override
 		public void onApplicationEvent(RSocketServerInitializedEvent event) {
-			setPortProperty(this.applicationContext, event.getServer().address().getPort());
+			if (event.getServer().address() != null) {
+				setPortProperty(this.applicationContext, event.getServer().address().getPort());
+			}
 		}
 
 		private void setPortProperty(ApplicationContext context, int port) {
